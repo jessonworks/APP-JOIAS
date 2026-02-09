@@ -27,14 +27,20 @@ export const generateCatalogImage = async (
   const ratioInstruction = ratio === AspectRatio.STORY ? "9:16" : "1:1";
 
   const prompt = `
-    Aja como um fotógrafo profissional de joias de luxo.
-    OBJETIVO: Criar uma foto de catálogo perfeita.
+    TASK: High-End Jewelry Catalog Composite.
     
-    INSTRUÇÕES:
-    1. Pegue a JOIA da 'Imagem do Produto'.
-    2. Aplique o ESTILO, ILUMINAÇÃO e FUNDO da 'Imagem de Referência'.
-    3. Preserve a geometria exata, cor e detalhes da joia original.
-    4. O resultado deve ser uma composição fotorrealista de alta qualidade em formato ${ratioInstruction}.
+    INPUTS:
+    - 'Product Image': A piece of jewelry.
+    - 'Reference Image': The desired background, lighting, and mood.
+    
+    STRICT RULES:
+    1. EXTRACT the jewelry from 'Product Image' with pixel-perfect precision.
+    2. PRESERVE original materials: if it is 18k Gold, keep it gold. Do not change gemstone colors or clarity.
+    3. MAINTAIN the exact shape and facets of the jewelry.
+    4. PLACE the jewelry into the environment of the 'Reference Image'.
+    5. MATCH the lighting, shadows, and reflections of the reference onto the jewelry surfaces to make it look realistic.
+    6. OUTPUT: A professional, ultra-realistic 4k jewelry photography shot in ${ratioInstruction} aspect ratio.
+    7. DO NOT add hands, necks, or models unless they are present in the reference image.
   `;
 
   const response = await ai.models.generateContent({
@@ -53,7 +59,6 @@ export const generateCatalogImage = async (
     }
   });
 
-  // Itera pelas partes para encontrar a imagem conforme as diretrizes
   if (response.candidates?.[0]?.content?.parts) {
     for (const part of response.candidates[0].content.parts) {
       if (part.inlineData?.data) {
@@ -62,7 +67,7 @@ export const generateCatalogImage = async (
     }
   }
 
-  throw new Error("A IA não retornou uma imagem válida. Tente novamente.");
+  throw new Error("A IA não conseguiu processar a imagem. Tente uma referência com iluminação mais clara.");
 };
 
 export const generateCreativeImage = async (
@@ -72,7 +77,7 @@ export const generateCreativeImage = async (
   const ai = getAiClient();
   const response = await ai.models.generateImages({
     model: 'imagen-4.0-generate-001',
-    prompt: prompt,
+    prompt: `Professional high-end jewelry photography: ${prompt}. Cinematic lighting, macro shot, 8k resolution, elegant background.`,
     config: {
       numberOfImages: 1,
       outputMimeType: 'image/jpeg',
@@ -98,7 +103,7 @@ export const editImage = async (
     contents: {
       parts: [
         { inlineData: { data: stripBase64Prefix(imageBase64), mimeType: mimeType } },
-        { text: `Edit instructions: ${instructions}` }
+        { text: `Modify this jewelry photo following these instructions: ${instructions}. Keep the jewelry details sharp and realistic.` }
       ]
     }
   });

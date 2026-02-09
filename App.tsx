@@ -9,6 +9,14 @@ import { Login } from './components/Login';
 import { Dashboard } from './components/Dashboard';
 import { supabase, isSupabaseConfigured } from './services/supabaseClient';
 
+const LOADING_STEPS = [
+  "Analisando geometria da joia...",
+  "Mapeando reflexos de luxo...",
+  "Extraindo estilo da referência...",
+  "Renderizando iluminação de estúdio...",
+  "Finalizando composição 4K..."
+];
+
 const App: React.FC = () => {
   const [user, setUser] = useState<any>(null);
   const [loadingSession, setLoadingSession] = useState(true);
@@ -16,23 +24,32 @@ const App: React.FC = () => {
   const [mode, setMode] = useState<GeneratorMode>(GeneratorMode.CATALOG);
   const [isDemo, setIsDemo] = useState(false);
   
-  // State for Catalog Mode
   const [jewelryImage, setJewelryImage] = useState<ImageFile | null>(null);
   const [referenceImage, setReferenceImage] = useState<ImageFile | null>(null);
-  
-  // State for Creative/Edit Mode
   const [textPrompt, setTextPrompt] = useState<string>('');
   const [editSourceImage, setEditSourceImage] = useState<ImageFile | null>(null);
 
-  // Shared State
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>(AspectRatio.SQUARE);
   const [generatedUrl, setGeneratedUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [loadingStep, setLoadingStep] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    let interval: any;
+    if (loading) {
+      setLoadingStep(0);
+      interval = setInterval(() => {
+        setLoadingStep(prev => (prev + 1) % LOADING_STEPS.length);
+      }, 3000);
+    } else {
+      clearInterval(interval);
+    }
+    return () => clearInterval(interval);
+  }, [loading]);
+
+  useEffect(() => {
     if (!isSupabaseConfigured) {
-      console.warn("Supabase não configurado. Entrando em modo de demonstração.");
       setIsDemo(true);
       setLoadingSession(false);
       return;
@@ -87,19 +104,16 @@ const App: React.FC = () => {
 
       setGeneratedUrl(resultUrl);
 
-      // Salvar no banco apenas se configurado e logado
-      if (user && resultUrl && supabase) {
-        await supabase.from('generations').insert({
+      // NOVO: Apenas logamos que o usuário gerou algo, sem salvar a imagem
+      if (user && supabase) {
+        await supabase.from('usage_logs').insert({
           user_id: user.id,
-          image_url: resultUrl,
-          mode: mode,
-          aspect_ratio: aspectRatio,
-          prompt: textPrompt || 'Catalog Composition'
+          user_email: user.email,
+          action_type: `GENERATED_${mode}`
         });
       }
 
     } catch (err: any) {
-      console.error(err);
       setError(err.message || "Erro na geração da imagem.");
     } finally {
       setLoading(false);
@@ -114,14 +128,12 @@ const App: React.FC = () => {
     );
   }
 
-  // Se não estiver configurado ou não tiver usuário e não for demo, mostra login
   if (!isDemo && !user) {
     return <Login onLoginSuccess={() => setView('app')} />;
   }
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-200 font-sans selection:bg-gold-500/30">
-      {/* Header */}
       <header className="bg-slate-900 border-b border-slate-800 sticky top-0 z-50 shadow-lg">
         <div className="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -135,31 +147,12 @@ const App: React.FC = () => {
           </div>
 
           <nav className="flex gap-1 items-center">
-            <button 
-              onClick={() => setView('app')}
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${view === 'app' ? 'bg-slate-800 text-gold-500' : 'text-slate-400 hover:text-white'}`}
-            >
-              Gerador
-            </button>
-            {!isDemo && (
-              <button 
-                onClick={() => setView('dashboard')}
-                className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${view === 'dashboard' ? 'bg-slate-800 text-gold-500' : 'text-slate-400 hover:text-white'}`}
-              >
-                Histórico
-              </button>
+            <button onClick={() => setView('app')} className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${view === 'app' ? 'bg-slate-800 text-gold-500' : 'text-slate-400 hover:text-white'}`}>Gerador</button>
+            {!isDemo && user?.email?.includes('admin') && (
+              <button onClick={() => setView('dashboard')} className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${view === 'dashboard' ? 'bg-slate-800 text-gold-500' : 'text-slate-400 hover:text-white'}`}>Painel Admin</button>
             )}
             <div className="h-6 w-px bg-slate-800 mx-2"></div>
-            {isDemo ? (
-               <div className="text-xs text-slate-500 hidden md:block">Configure o Supabase para salvar</div>
-            ) : (
-              <button 
-                onClick={handleLogout}
-                className="px-4 py-2 rounded-lg text-sm font-medium text-red-400 hover:bg-red-400/10 transition-all"
-              >
-                Sair
-              </button>
-            )}
+            {isDemo ? <div className="text-xs text-slate-500 hidden md:block">Modo Teste</div> : <button onClick={handleLogout} className="px-4 py-2 rounded-lg text-sm font-medium text-red-400 hover:bg-red-400/10 transition-all">Sair</button>}
           </nav>
         </div>
       </header>
@@ -169,9 +162,7 @@ const App: React.FC = () => {
           <Dashboard />
         ) : (
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12">
-            {/* Left Column: Controls */}
             <div className="lg:col-span-5 flex flex-col gap-6">
-              
               <div className="bg-slate-900/50 p-6 rounded-2xl border border-slate-800">
                 <nav className="flex gap-2 mb-6 bg-slate-900 p-1 rounded-xl border border-slate-800">
                     <button onClick={() => setMode(GeneratorMode.CATALOG)} className={`flex-1 py-2 rounded-lg text-[10px] font-bold transition-all ${mode === GeneratorMode.CATALOG ? 'bg-gold-500 text-slate-950' : 'text-slate-400'}`}>CATÁLOGO</button>
@@ -186,9 +177,9 @@ const App: React.FC = () => {
                     {mode === GeneratorMode.EDIT && 'Edição com IA'}
                   </h2>
                   <p className="text-xs text-slate-400">
-                    {mode === GeneratorMode.CATALOG && 'Envie sua joia e uma foto de inspiração lateral.'}
-                    {mode === GeneratorMode.CREATIVE && 'Descreva a joia que você imagina.'}
-                    {mode === GeneratorMode.EDIT && 'Altere fundos ou cores da imagem enviada.'}
+                    {mode === GeneratorMode.CATALOG && 'Pegamos a sua joia e aplicamos o cenário da referência.'}
+                    {mode === GeneratorMode.CREATIVE && 'Crie joias conceituais do zero.'}
+                    {mode === GeneratorMode.EDIT && 'Ajuste detalhes de uma foto de joia.'}
                   </p>
                 </div>
 
@@ -199,39 +190,19 @@ const App: React.FC = () => {
 
                   {mode === GeneratorMode.CATALOG && (
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      <ImageUpload 
-                        label="Sua Joia" 
-                        image={jewelryImage} 
-                        onUpload={setJewelryImage} 
-                        onRemove={() => setJewelryImage(null)} 
-                      />
-                      <ImageUpload 
-                        label="Inspiração" 
-                        image={referenceImage} 
-                        onUpload={setReferenceImage} 
-                        onRemove={() => setReferenceImage(null)} 
-                      />
+                      <ImageUpload label="1. Sua Joia" image={jewelryImage} onUpload={setJewelryImage} onRemove={() => setJewelryImage(null)} />
+                      <ImageUpload label="2. Estilo/Cenário" image={referenceImage} onUpload={setReferenceImage} onRemove={() => setReferenceImage(null)} />
                     </div>
                   )}
 
                   {mode === GeneratorMode.CREATIVE && (
-                    <textarea
-                      value={textPrompt}
-                      onChange={(e) => setTextPrompt(e.target.value)}
-                      placeholder="Ex: Anel de esmeralda em um pedestal de mármore branco com luz solar suave..."
-                      className="w-full bg-slate-800 border border-slate-700 rounded-xl p-4 text-white text-sm focus:ring-2 focus:ring-gold-500 outline-none h-32 resize-none"
-                    />
+                    <textarea value={textPrompt} onChange={(e) => setTextPrompt(e.target.value)} placeholder="Ex: Anel de diamante solitário sobre veludo azul royal..." className="w-full bg-slate-800 border border-slate-700 rounded-xl p-4 text-white text-sm focus:ring-2 focus:ring-gold-500 outline-none h-32 resize-none" />
                   )}
 
                   {mode === GeneratorMode.EDIT && (
                     <>
-                      <ImageUpload label="Foto Original" image={editSourceImage} onUpload={setEditSourceImage} onRemove={() => setEditSourceImage(null)} />
-                      <textarea
-                        value={textPrompt}
-                        onChange={(e) => setTextPrompt(e.target.value)}
-                        placeholder="Ex: Mude o fundo para um deserto ao pôr do sol..."
-                        className="w-full bg-slate-800 border border-slate-700 rounded-xl p-4 text-white text-sm focus:ring-2 focus:ring-gold-500 outline-none h-24 resize-none"
-                      />
+                      <ImageUpload label="Imagem" image={editSourceImage} onUpload={setEditSourceImage} onRemove={() => setEditSourceImage(null)} />
+                      <textarea value={textPrompt} onChange={(e) => setTextPrompt(e.target.value)} placeholder="Ex: Mude o metal para Ouro Rosa..." className="w-full bg-slate-800 border border-slate-700 rounded-xl p-4 text-white text-sm focus:ring-2 focus:ring-gold-500 outline-none h-24 resize-none" />
                     </>
                   )}
 
@@ -241,13 +212,13 @@ const App: React.FC = () => {
                     className={`w-full py-4 rounded-xl font-bold text-slate-900 uppercase tracking-widest transition-all
                       ${loading ? 'bg-slate-700 text-slate-400' : 'bg-gradient-to-r from-gold-400 to-gold-600 hover:brightness-110 active:scale-95 shadow-lg shadow-gold-500/20'}`}
                   >
-                    {loading ? 'Processando...' : 'Gerar Resultado'}
+                    {loading ? LOADING_STEPS[loadingStep] : 'Gerar Resultado'}
                   </button>
                 </div>
               </div>
+              <p className="text-[10px] text-center text-slate-600 italic">As imagens não são salvas em nossos servidores. Baixe o resultado imediatamente.</p>
             </div>
 
-            {/* Right Column: Results */}
             <div className="lg:col-span-7">
               <div className="sticky top-24">
                 <GeneratedDisplay imageUrl={generatedUrl} loading={loading} error={error} />
