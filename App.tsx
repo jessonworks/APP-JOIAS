@@ -114,7 +114,7 @@ const App: React.FC = () => {
             <code className="bg-slate-800 text-gold-500 px-2 py-1 rounded mx-1 text-sm font-mono">SUPABASE_ANON_KEY</code> no Vercel.
           </p>
           <div className="text-xs text-slate-500 bg-slate-950 p-4 rounded-xl text-left font-mono">
-            Vá em Vercel > Settings > Environment Variables
+            {"Vá em Vercel > Settings > Environment Variables"}
           </div>
         </div>
       </div>
