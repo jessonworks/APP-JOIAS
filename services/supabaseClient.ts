@@ -1,16 +1,31 @@
 
 import { createClient } from '@supabase/supabase-js';
 
-// Fallback to placeholder strings to prevent 'supabaseUrl is required' crash during initialization.
-// These will still fail during actual authentication calls but allow the app to boot.
-const supabaseUrl = process.env.SUPABASE_URL || 'https://placeholder.supabase.co';
-const supabaseAnonKey = process.env.SUPABASE_ANON_KEY || 'placeholder-key';
+/**
+ * SQL PARA CONFIGURAÇÃO NO SUPABASE:
+ * 
+ * create table generations (
+ *   id uuid default gen_random_uuid() primary key,
+ *   created_at timestamp with time zone default now(),
+ *   user_id uuid references auth.users(id),
+ *   image_url text not null,
+ *   mode text,
+ *   aspect_ratio text,
+ *   prompt text
+ * );
+ * 
+ * alter table generations enable row level security;
+ * 
+ * create policy "Users can view own generations" on generations for select using (auth.uid() = user_id);
+ * create policy "Users can insert own generations" on generations for insert with check (auth.uid() = user_id);
+ */
 
-if (!process.env.SUPABASE_URL || !process.env.SUPABASE_ANON_KEY) {
-  console.warn(
-    "LuxeLens: Supabase credentials (SUPABASE_URL / SUPABASE_ANON_KEY) are missing in environment variables. " +
-    "Please configure them in Vercel/Local Settings for authentication to work."
-  );
-}
+const supabaseUrl = process.env.SUPABASE_URL || '';
+const supabaseAnonKey = process.env.SUPABASE_ANON_KEY || '';
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+// Só inicializa se as chaves existirem para evitar erros de runtime
+export const isSupabaseConfigured = !!(supabaseUrl && supabaseAnonKey && supabaseUrl !== 'undefined');
+
+export const supabase = isSupabaseConfigured 
+  ? createClient(supabaseUrl, supabaseAnonKey)
+  : null;

@@ -7,13 +7,14 @@ import { AspectRatioSelector } from './components/AspectRatioSelector';
 import { GeneratedDisplay } from './components/GeneratedDisplay';
 import { Login } from './components/Login';
 import { Dashboard } from './components/Dashboard';
-import { supabase } from './services/supabaseClient';
+import { supabase, isSupabaseConfigured } from './services/supabaseClient';
 
 const App: React.FC = () => {
   const [user, setUser] = useState<any>(null);
   const [loadingSession, setLoadingSession] = useState(true);
   const [view, setView] = useState<'app' | 'dashboard'>('app');
   const [mode, setMode] = useState<GeneratorMode>(GeneratorMode.CATALOG);
+  const [isDemo, setIsDemo] = useState(false);
   
   // State for Catalog Mode
   const [jewelryImage, setJewelryImage] = useState<ImageFile | null>(null);
@@ -29,33 +30,32 @@ const App: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const isConfigured = !!(process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY);
-
   useEffect(() => {
-    if (!isConfigured) {
+    if (!isSupabaseConfigured) {
+      console.warn("Supabase não configurado. Entrando em modo de demonstração.");
+      setIsDemo(true);
       setLoadingSession(false);
       return;
     }
 
-    // Check initial session
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    supabase?.auth.getSession().then(({ data: { session } }) => {
       setUser(session?.user ?? null);
       setLoadingSession(false);
-    }).catch(err => {
-      console.error("Auth session check failed:", err);
+    }).catch(() => {
+      setIsDemo(true);
       setLoadingSession(false);
     });
 
-    // Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase!.auth.onAuthStateChange((_event, session) => {
       setUser(session?.user ?? null);
     });
 
     return () => subscription.unsubscribe();
-  }, [isConfigured]);
+  }, []);
 
   const handleLogout = async () => {
-    await supabase.auth.signOut();
+    if (supabase) await supabase.auth.signOut();
+    setUser(null);
   };
 
   const handleGenerate = async () => {
@@ -86,9 +86,21 @@ const App: React.FC = () => {
       }
 
       setGeneratedUrl(resultUrl);
+
+      // Salvar no banco apenas se configurado e logado
+      if (user && resultUrl && supabase) {
+        await supabase.from('generations').insert({
+          user_id: user.id,
+          image_url: resultUrl,
+          mode: mode,
+          aspect_ratio: aspectRatio,
+          prompt: textPrompt || 'Catalog Composition'
+        });
+      }
+
     } catch (err: any) {
       console.error(err);
-      setError(err.message || "Ocorreu um erro desconhecido.");
+      setError(err.message || "Erro na geração da imagem.");
     } finally {
       setLoading(false);
     }
@@ -102,26 +114,8 @@ const App: React.FC = () => {
     );
   }
 
-  if (!isConfigured) {
-    return (
-      <div className="min-h-screen bg-slate-950 flex items-center justify-center p-6 text-center">
-        <div className="max-w-md bg-slate-900 p-8 rounded-3xl border border-red-500/30">
-          <div className="text-4xl mb-4">⚠️</div>
-          <h1 className="text-xl font-bold text-white mb-4">Configuração Necessária</h1>
-          <p className="text-slate-400 mb-6">
-            O Supabase não foi configurado corretamente. Adicione as variáveis de ambiente 
-            <code className="bg-slate-800 text-gold-500 px-2 py-1 rounded mx-1 text-sm font-mono">SUPABASE_URL</code> e 
-            <code className="bg-slate-800 text-gold-500 px-2 py-1 rounded mx-1 text-sm font-mono">SUPABASE_ANON_KEY</code> no Vercel.
-          </p>
-          <div className="text-xs text-slate-500 bg-slate-950 p-4 rounded-xl text-left font-mono">
-            {"Vá em Vercel > Settings > Environment Variables"}
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (!user) {
+  // Se não estiver configurado ou não tiver usuário e não for demo, mostra login
+  if (!isDemo && !user) {
     return <Login onLoginSuccess={() => setView('app')} />;
   }
 
@@ -137,71 +131,74 @@ const App: React.FC = () => {
               </svg>
             </div>
             <h1 className="text-2xl font-serif text-white tracking-wide">Luxe<span className="text-gold-500">Lens</span></h1>
+            {isDemo && <span className="text-[10px] bg-gold-500/10 text-gold-500 border border-gold-500/20 px-2 py-0.5 rounded-full font-bold">DEMO</span>}
           </div>
 
-          <nav className="hidden lg:flex gap-1 items-center">
+          <nav className="flex gap-1 items-center">
             <button 
               onClick={() => setView('app')}
               className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${view === 'app' ? 'bg-slate-800 text-gold-500' : 'text-slate-400 hover:text-white'}`}
             >
-              Gerador AI
+              Gerador
             </button>
-            <button 
-              onClick={() => setView('dashboard')}
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${view === 'dashboard' ? 'bg-slate-800 text-gold-500' : 'text-slate-400 hover:text-white'}`}
-            >
-              Dashboard
-            </button>
+            {!isDemo && (
+              <button 
+                onClick={() => setView('dashboard')}
+                className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${view === 'dashboard' ? 'bg-slate-800 text-gold-500' : 'text-slate-400 hover:text-white'}`}
+              >
+                Histórico
+              </button>
+            )}
             <div className="h-6 w-px bg-slate-800 mx-2"></div>
-            <button 
-              onClick={handleLogout}
-              className="px-4 py-2 rounded-lg text-sm font-medium text-red-400 hover:bg-red-400/10 transition-all"
-            >
-              Sair
-            </button>
+            {isDemo ? (
+               <div className="text-xs text-slate-500 hidden md:block">Configure o Supabase para salvar</div>
+            ) : (
+              <button 
+                onClick={handleLogout}
+                className="px-4 py-2 rounded-lg text-sm font-medium text-red-400 hover:bg-red-400/10 transition-all"
+              >
+                Sair
+              </button>
+            )}
           </nav>
-          
-          <button className="lg:hidden text-slate-400" onClick={() => setView(view === 'app' ? 'dashboard' : 'app')}>
-             {view === 'app' ? '📊' : '🎨'}
-          </button>
         </div>
       </header>
 
-      <main className="max-w-6xl mx-auto px-4 py-8 md:py-12">
-        {view === 'dashboard' ? (
+      <main className="max-w-6xl mx-auto px-4 py-8">
+        {view === 'dashboard' && !isDemo ? (
           <Dashboard />
         ) : (
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 md:gap-12 animate-in fade-in duration-500">
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12">
             {/* Left Column: Controls */}
-            <div className="lg:col-span-5 flex flex-col gap-8">
+            <div className="lg:col-span-5 flex flex-col gap-6">
               
-              <div>
-                <nav className="flex gap-2 mb-6 bg-slate-900 p-1 rounded-xl border border-slate-800 w-fit">
-                    <button onClick={() => setMode(GeneratorMode.CATALOG)} className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${mode === GeneratorMode.CATALOG ? 'bg-gold-500 text-slate-950' : 'text-slate-400'}`}>CATÁLOGO</button>
-                    <button onClick={() => setMode(GeneratorMode.CREATIVE)} className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${mode === GeneratorMode.CREATIVE ? 'bg-gold-500 text-slate-950' : 'text-slate-400'}`}>CRIATIVO</button>
-                    <button onClick={() => setMode(GeneratorMode.EDIT)} className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${mode === GeneratorMode.EDIT ? 'bg-gold-500 text-slate-950' : 'text-slate-400'}`}>EDITOR</button>
+              <div className="bg-slate-900/50 p-6 rounded-2xl border border-slate-800">
+                <nav className="flex gap-2 mb-6 bg-slate-900 p-1 rounded-xl border border-slate-800">
+                    <button onClick={() => setMode(GeneratorMode.CATALOG)} className={`flex-1 py-2 rounded-lg text-[10px] font-bold transition-all ${mode === GeneratorMode.CATALOG ? 'bg-gold-500 text-slate-950' : 'text-slate-400'}`}>CATÁLOGO</button>
+                    <button onClick={() => setMode(GeneratorMode.CREATIVE)} className={`flex-1 py-2 rounded-lg text-[10px] font-bold transition-all ${mode === GeneratorMode.CREATIVE ? 'bg-gold-500 text-slate-950' : 'text-slate-400'}`}>CRIATIVO</button>
+                    <button onClick={() => setMode(GeneratorMode.EDIT)} className={`flex-1 py-2 rounded-lg text-[10px] font-bold transition-all ${mode === GeneratorMode.EDIT ? 'bg-gold-500 text-slate-950' : 'text-slate-400'}`}>EDITOR</button>
                 </nav>
 
-                <h2 className="text-3xl font-serif text-white mb-2">
-                  {mode === GeneratorMode.CATALOG && 'Criador de Catálogo'}
-                  {mode === GeneratorMode.CREATIVE && 'Estúdio Criativo'}
-                  {mode === GeneratorMode.EDIT && 'Editor Mágico'}
-                </h2>
-                <p className="text-slate-400 leading-relaxed">
-                  {mode === GeneratorMode.CATALOG && 'Combine a foto real da sua joia com uma referência de estilo. A IA preserva as dimensões originais da peça.'}
-                  {mode === GeneratorMode.CREATIVE && 'Descreva sua visão e deixe o Imagen 4 gerar imagens deslumbrantes do zero.'}
-                  {mode === GeneratorMode.EDIT && 'Faça ajustes rápidos usando linguagem natural.'}
-                </p>
-              </div>
+                <div className="mb-6">
+                  <h2 className="text-2xl font-serif text-white mb-2">
+                    {mode === GeneratorMode.CATALOG && 'Gerador de Catálogo'}
+                    {mode === GeneratorMode.CREATIVE && 'Criação do Zero'}
+                    {mode === GeneratorMode.EDIT && 'Edição com IA'}
+                  </h2>
+                  <p className="text-xs text-slate-400">
+                    {mode === GeneratorMode.CATALOG && 'Envie sua joia e uma foto de inspiração lateral.'}
+                    {mode === GeneratorMode.CREATIVE && 'Descreva a joia que você imagina.'}
+                    {mode === GeneratorMode.EDIT && 'Altere fundos ou cores da imagem enviada.'}
+                  </p>
+                </div>
 
-              <div className="space-y-6 bg-slate-900/50 p-6 rounded-2xl border border-slate-800">
-                {mode !== GeneratorMode.EDIT && (
-                  <AspectRatioSelector selected={aspectRatio} onSelect={setAspectRatio} disabled={loading} />
-                )}
+                <div className="space-y-6">
+                  {mode !== GeneratorMode.EDIT && (
+                    <AspectRatioSelector selected={aspectRatio} onSelect={setAspectRatio} disabled={loading} />
+                  )}
 
-                {mode === GeneratorMode.CATALOG && (
-                  <>
-                    <div className="grid grid-cols-2 gap-4">
+                  {mode === GeneratorMode.CATALOG && (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                       <ImageUpload 
                         label="Sua Joia" 
                         image={jewelryImage} 
@@ -209,67 +206,50 @@ const App: React.FC = () => {
                         onRemove={() => setJewelryImage(null)} 
                       />
                       <ImageUpload 
-                        label="Referência" 
+                        label="Inspiração" 
                         image={referenceImage} 
                         onUpload={setReferenceImage} 
                         onRemove={() => setReferenceImage(null)} 
                       />
                     </div>
-                  </>
-                )}
+                  )}
 
-                {mode === GeneratorMode.CREATIVE && (
-                  <div className="space-y-3">
-                    <label className="text-sm font-medium text-slate-300 uppercase tracking-wide">Prompt de Criação</label>
+                  {mode === GeneratorMode.CREATIVE && (
                     <textarea
                       value={textPrompt}
                       onChange={(e) => setTextPrompt(e.target.value)}
-                      placeholder="Ex: Um colar de diamantes flutuando sobre água escura com reflexos dourados..."
-                      className="w-full bg-slate-800 border border-slate-700 rounded-xl p-4 text-white placeholder-slate-500 focus:ring-2 focus:ring-gold-500 focus:border-transparent outline-none resize-none h-32 transition-all"
+                      placeholder="Ex: Anel de esmeralda em um pedestal de mármore branco com luz solar suave..."
+                      className="w-full bg-slate-800 border border-slate-700 rounded-xl p-4 text-white text-sm focus:ring-2 focus:ring-gold-500 outline-none h-32 resize-none"
                     />
-                  </div>
-                )}
+                  )}
 
-                {mode === GeneratorMode.EDIT && (
-                  <>
-                    <ImageUpload 
-                        label="Imagem para Editar" 
-                        image={editSourceImage} 
-                        onUpload={setEditSourceImage} 
-                        onRemove={() => setEditSourceImage(null)} 
-                    />
-                     <div className="space-y-3">
-                      <label className="text-sm font-medium text-slate-300 uppercase tracking-wide">Instruções de Edição</label>
+                  {mode === GeneratorMode.EDIT && (
+                    <>
+                      <ImageUpload label="Foto Original" image={editSourceImage} onUpload={setEditSourceImage} onRemove={() => setEditSourceImage(null)} />
                       <textarea
                         value={textPrompt}
                         onChange={(e) => setTextPrompt(e.target.value)}
-                        placeholder="Ex: Adicione um filtro vintage, remova o fundo..."
-                        className="w-full bg-slate-800 border border-slate-700 rounded-xl p-4 text-white placeholder-slate-500 focus:ring-2 focus:ring-gold-500 focus:border-transparent outline-none resize-none h-24 transition-all"
+                        placeholder="Ex: Mude o fundo para um deserto ao pôr do sol..."
+                        className="w-full bg-slate-800 border border-slate-700 rounded-xl p-4 text-white text-sm focus:ring-2 focus:ring-gold-500 outline-none h-24 resize-none"
                       />
-                    </div>
-                  </>
-                )}
+                    </>
+                  )}
 
-                <button
-                  onClick={handleGenerate}
-                  disabled={loading}
-                  className={`w-full py-4 rounded-xl font-bold text-slate-900 uppercase tracking-wider shadow-lg transition-all transform active:scale-[0.98]
-                    ${loading 
-                      ? 'bg-slate-700 cursor-not-allowed text-slate-400' 
-                      : 'bg-gradient-to-r from-gold-400 to-gold-600 hover:from-gold-300 hover:to-gold-500 shadow-gold-500/20'}`}
-                >
-                  {loading ? 'Processando...' : 'Gerar Imagem'}
-                </button>
+                  <button
+                    onClick={handleGenerate}
+                    disabled={loading}
+                    className={`w-full py-4 rounded-xl font-bold text-slate-900 uppercase tracking-widest transition-all
+                      ${loading ? 'bg-slate-700 text-slate-400' : 'bg-gradient-to-r from-gold-400 to-gold-600 hover:brightness-110 active:scale-95 shadow-lg shadow-gold-500/20'}`}
+                  >
+                    {loading ? 'Processando...' : 'Gerar Resultado'}
+                  </button>
+                </div>
               </div>
             </div>
 
             {/* Right Column: Results */}
-            <div className="lg:col-span-7 flex flex-col">
+            <div className="lg:col-span-7">
               <div className="sticky top-24">
-                <h3 className="text-xl font-serif text-white mb-4 flex items-center gap-2">
-                  <span className="w-2 h-2 bg-gold-500 rounded-full"></span>
-                  Resultado
-                </h3>
                 <GeneratedDisplay imageUrl={generatedUrl} loading={loading} error={error} />
               </div>
             </div>

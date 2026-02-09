@@ -1,28 +1,20 @@
-import { GoogleGenAI, Modality } from "@google/genai";
+
+import { GoogleGenAI } from "@google/genai";
 import { AspectRatio } from "../types";
 
 const getAiClient = () => {
   const apiKey = process.env.API_KEY;
   if (!apiKey) {
-    throw new Error("API_KEY is not defined in environment variables");
+    throw new Error("API_KEY não configurada no ambiente.");
   }
   return new GoogleGenAI({ apiKey });
 };
 
-/**
- * Helper to convert base64 string to proper format if needed, 
- * though the SDK often takes raw base64 without the data URL prefix in some contexts.
- * For this SDK, inlineData expects the raw base64 string (without 'data:image/png;base64,').
- */
 const stripBase64Prefix = (base64: string): string => {
   if (!base64) return '';
   return base64.split(',')[1] || base64;
 };
 
-/**
- * Generates a jewelry catalog image based on a source product and a style reference.
- * Uses gemini-2.5-flash-image (Nano Banana) for multimodal composition.
- */
 export const generateCatalogImage = async (
   productImageBase64: string,
   productMimeType: string,
@@ -30,85 +22,54 @@ export const generateCatalogImage = async (
   referenceMimeType: string,
   ratio: AspectRatio
 ): Promise<string> => {
-  if (!productMimeType) throw new Error("O formato da imagem da joia não foi reconhecido.");
-  if (!referenceMimeType) throw new Error("O formato da imagem de referência não foi reconhecido.");
-
   const ai = getAiClient();
   
-  const ratioInstruction = ratio === AspectRatio.STORY 
-    ? "vertical aspect ratio (9:16)" 
-    : "square aspect ratio (1:1)";
+  const ratioInstruction = ratio === AspectRatio.STORY ? "9:16" : "1:1";
 
-  // Prompt engineering to strictly enforce size constraints
   const prompt = `
-    You are a professional jewelry photographer and editor.
+    Aja como um fotógrafo profissional de joias de luxo.
+    OBJETIVO: Criar uma foto de catálogo perfeita.
     
-    Input Images:
-    1. Product Image: A photo of a jewelry piece.
-    2. Reference Image: A photo showing the desired style, background, and mood.
-
-    Task:
-    Create a COMPOSITE image.
-    Take the jewelry piece from the Product Image and place it into a scene that matches the style/background of the Reference Image.
-
-    Requirements:
-    - PRESERVE THE JEWELRY: The physical shape, gemstone size, and metal details of the product must remain exactly as in the Product Image. Do not warp or resize the jewelry disproportionately.
-    - MATCH STYLE: The lighting, shadows, and background should perfectly mimic the Reference Image.
-    - OUTPUT FORMAT: Generate the result in a ${ratioInstruction}.
-    - QUALITY: Photorealistic, high resolution, catalog quality.
+    INSTRUÇÕES:
+    1. Pegue a JOIA da 'Imagem do Produto'.
+    2. Aplique o ESTILO, ILUMINAÇÃO e FUNDO da 'Imagem de Referência'.
+    3. Preserve a geometria exata, cor e detalhes da joia original.
+    4. O resultado deve ser uma composição fotorrealista de alta qualidade em formato ${ratioInstruction}.
   `;
 
   const response = await ai.models.generateContent({
     model: 'gemini-2.5-flash-image',
     contents: {
       parts: [
-        {
-          inlineData: {
-            data: stripBase64Prefix(productImageBase64),
-            mimeType: productMimeType
-          }
-        },
-        {
-          inlineData: {
-            data: stripBase64Prefix(referenceImageBase64),
-            mimeType: referenceMimeType
-          }
-        },
+        { inlineData: { data: stripBase64Prefix(productImageBase64), mimeType: productMimeType } },
+        { inlineData: { data: stripBase64Prefix(referenceImageBase64), mimeType: referenceMimeType } },
         { text: prompt }
       ]
     },
     config: {
-      responseModalities: [Modality.IMAGE],
+      imageConfig: {
+        aspectRatio: ratio === AspectRatio.STORY ? "9:16" : "1:1"
+      }
     }
   });
 
-  // Flash Image (Nano Banana) returns generated images in the candidates content parts
-  const part = response.candidates?.[0]?.content?.parts?.[0];
-  
-  if (part) {
-    if (part.inlineData && part.inlineData.data) {
-      return `data:image/png;base64,${part.inlineData.data}`;
-    }
-    // Handle refusal or text response which explains why image wasn't generated
-    if (part.text) {
-      console.warn("Model returned text instead of image:", part.text);
-      throw new Error(`A IA não conseguiu gerar a imagem. Resposta da IA: ${part.text}`);
+  // Itera pelas partes para encontrar a imagem conforme as diretrizes
+  if (response.candidates?.[0]?.content?.parts) {
+    for (const part of response.candidates[0].content.parts) {
+      if (part.inlineData?.data) {
+        return `data:image/png;base64,${part.inlineData.data}`;
+      }
     }
   }
 
-  throw new Error("O Gemini não retornou nenhuma imagem ou explicação. Tente novamente.");
+  throw new Error("A IA não retornou uma imagem válida. Tente novamente.");
 };
 
-/**
- * Generates a new image from scratch using text prompts.
- * Uses imagen-4.0-generate-001 (Imagen 3/4).
- */
 export const generateCreativeImage = async (
   prompt: string,
   ratio: AspectRatio
 ): Promise<string> => {
   const ai = getAiClient();
-
   const response = await ai.models.generateImages({
     model: 'imagen-4.0-generate-001',
     prompt: prompt,
@@ -123,52 +84,31 @@ export const generateCreativeImage = async (
   if (imageBytes) {
     return `data:image/jpeg;base64,${imageBytes}`;
   }
-
-  throw new Error("O Imagen não conseguiu gerar a imagem. Tente um prompt diferente.");
+  throw new Error("Erro ao gerar imagem criativa.");
 };
 
-/**
- * Edits an existing image based on instructions.
- * Uses gemini-2.5-flash-image.
- */
 export const editImage = async (
   imageBase64: string,
   mimeType: string,
   instructions: string
 ): Promise<string> => {
-  if (!mimeType) throw new Error("O formato da imagem não foi reconhecido.");
-
   const ai = getAiClient();
-
   const response = await ai.models.generateContent({
     model: 'gemini-2.5-flash-image',
     contents: {
       parts: [
-        {
-          inlineData: {
-            data: stripBase64Prefix(imageBase64),
-            mimeType: mimeType
-          }
-        },
-        { text: `Edit instructions: ${instructions}. Maintain high resolution and photorealism.` }
+        { inlineData: { data: stripBase64Prefix(imageBase64), mimeType: mimeType } },
+        { text: `Edit instructions: ${instructions}` }
       ]
-    },
-    config: {
-      responseModalities: [Modality.IMAGE],
     }
   });
 
-  const part = response.candidates?.[0]?.content?.parts?.[0];
-  
-  if (part) {
-    if (part.inlineData && part.inlineData.data) {
-      return `data:image/png;base64,${part.inlineData.data}`;
-    }
-    if (part.text) {
-        console.warn("Model returned text instead of image:", part.text);
-        throw new Error(`A IA não pôde editar a imagem. Motivo: ${part.text}`);
+  if (response.candidates?.[0]?.content?.parts) {
+    for (const part of response.candidates[0].content.parts) {
+      if (part.inlineData?.data) {
+        return `data:image/png;base64,${part.inlineData.data}`;
+      }
     }
   }
-
-  throw new Error("Nenhuma imagem editada foi retornada. Tente instruções mais simples.");
+  throw new Error("Erro ao editar imagem.");
 };
